@@ -79,7 +79,7 @@ logOther :: Text -> Q Exp
 logOther = logTH . LevelOther
 
 -- | Return an 'Unauthorized' value, with the given i18n message.
-unauthorizedI :: RenderMessage master msg => msg -> GHandler sub master AuthResult
+unauthorizedI :: RenderMessage master msg => msg -> GHandler sub master (AuthResult master url)
 unauthorizedI msg =do
     mr <- getMessageRender
     return $ Unauthorized $ mr msg

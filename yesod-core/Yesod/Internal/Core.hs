@@ -50,7 +50,7 @@ import qualified Data.ByteString.Lazy as L
 import Data.Monoid
 import Text.Hamlet
 import Text.Julius
-import Text.Blaze ((!), customAttribute, textTag, toValue, unsafeLazyByteString)
+import Text.Blaze ((!), customAttribute, textTag, toValue, unsafeLazyByteString, toHtml)
 import qualified Text.Blaze.Html5 as TBH
 import Data.Text.Lazy.Builder (toLazyText)
 import Data.Text.Lazy.Encoding (encodeUtf8)
@@ -181,7 +181,7 @@ class RenderRoute a => Yesod a where
     -- If authentication is required, return 'AuthenticationRequired'.
     isAuthorized :: Route a
                  -> Bool -- ^ is this a write request?
-                 -> GHandler s a AuthResult
+                 -> GHandler s a (AuthResult master url)
     isAuthorized _ _ = return Authorized
 
     -- | Determines whether the current request is a write request. By default,
@@ -392,6 +392,10 @@ defaultYesodRunner handler master sub murl toMasterRoute mkey req = do
                                 setUltDestCurrent
                                 redirect url'
                     Unauthorized s' -> permissionDenied s'
+                    NeedsAction url t -> do
+                        setMessage $ toHtml t
+                        setUltDestCurrent
+                        redirect url
                 handler
     let sessionMap = Map.fromList
                    $ filter (\(x, _) -> x /= nonceKey) session'
@@ -426,7 +430,7 @@ defaultYesodRunner handler master sub murl toMasterRoute mkey req = do
         hs'' = map headerToPair hs'
         hs''' = ("Content-Type", ct) : hs''
 
-data AuthResult = Authorized | AuthenticationRequired | Unauthorized Text
+data (Yesod master, RedirectUrl master url) => AuthResult master url = Authorized | AuthenticationRequired | Unauthorized Text | NeedsAction url Text
     deriving (Eq, Show, Read)
 
 -- | A type-safe, concise method of creating breadcrumbs for pages. For each
@@ -511,7 +515,9 @@ maybeAuthorized :: Yesod a
                 -> GHandler s a (Maybe (Route a))
 maybeAuthorized r isWrite = do
     x <- isAuthorized r isWrite
-    return $ if x == Authorized then Just r else Nothing
+    return $ go x
+  where go Authorized = Just r
+        go _          = Nothing
 
 jsToHtml :: Javascript -> Html
 jsToHtml (Javascript b) = preEscapedLazyText $ toLazyText b
