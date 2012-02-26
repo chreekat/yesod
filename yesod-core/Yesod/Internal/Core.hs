@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 -- | The basic typeclass for a Yesod application.
 module Yesod.Internal.Core
     ( -- * Type classes
@@ -13,6 +14,9 @@ module Yesod.Internal.Core
       -- ** Breadcrumbs
     , YesodBreadcrumbs (..)
     , breadcrumbs
+      --  ** Credentials
+    , YesodCredentials (..)
+    , isAuthorizedWithCredentials
       -- * Utitlities
     , maybeAuthorized
     , widgetToPageContent
@@ -42,7 +46,7 @@ import Yesod.Handler hiding (lift, getExpires)
 import Yesod.Routes.Class
 
 import Control.Arrow ((***))
-import Control.Monad (forM)
+import Control.Monad (forM, foldM)
 import Yesod.Widget
 import Yesod.Request
 import qualified Network.Wai as W
@@ -84,6 +88,7 @@ import Data.Aeson (Value (Array, String))
 import Data.Aeson.Encode (encode)
 import qualified Data.Vector as Vector
 import Network.Wai.Middleware.Gzip (GzipSettings, def)
+import Text.Blaze.Internal (Attributable)
 
 -- mega repo can't access this
 #ifndef MEGA
@@ -464,6 +469,50 @@ defaultYesodRunner handler master sub murl toMasterRoute mkey req = do
 data AuthResult = Authorized | AuthenticationRequired | Unauthorized Text
     deriving (Eq, Show, Read)
 
+-- | This class encapsulates a technique for more declarative authorization
+-- rules.
+--
+-- 1. Credentials for your site's available actions (i.e., its RESTful
+--    routes) are declared in a 'Credential' datatype.
+--
+-- 2. Rules for acquiring credentials are declared with 'acquireCredential'.
+--
+-- 3. A map from action to required credentials is declared with
+--    'requiredCredentials'.
+--
+-- Users of YesodCredentials are urged to use 'isAuthorizedWithCredentials' as a
+-- drop-in definition for 'isAuthorized'.
+class YesodCredentials master where
+    -- | This type enumerates the credentials associated with your site. For
+    -- instance, you could have @IsAdmin@ and @IsLoggedIn@ credentials with
+    -- @data Credential MySite = IsAdmin | IsLoggedIn@.
+    data Credential master
+
+    -- | This function (purely) specifies which credentials are required for
+    -- each route.
+    requiredCredentials
+        :: Route master -- ^ Requested route
+        -> Bool         -- ^ Is this a write request?
+        -> [Credential master] -- ^ List of required credentials
+
+    -- | How to acquire credentials.
+    --
+    -- Since this lives in 'GHandler', you can use redirects (e.g. 'Yesod.Auth.requireAuth')
+    -- to help the user acquire the credential in question.
+    acquireCredential :: Credential master -> GHandler sub master AuthResult
+
+-- | A useful definition for 'isAuthorized' for instances of 'YesodCredentials'.
+-- It verifies that the user has all the credentials required for the route (as
+-- specified in 'requiredCredentials').
+isAuthorizedWithCredentials :: YesodCredentials master
+    => Route master
+    -> Bool -- ^ is this a write request?
+    -> GHandler sub master AuthResult
+isAuthorizedWithCredentials r =  foldM acqCred Authorized . requiredCredentials r
+      where
+        acqCred Authorized c = acquireCredential c
+        acqCred badAuth    _ = return badAuth
+
 -- | A type-safe, concise method of creating breadcrumbs for pages. For each
 -- resource, you declare the title of the page and the parent resource (if
 -- present).
@@ -632,6 +681,7 @@ $case jsLoader master
     renderLoc' render' (Local url) = render' url []
     renderLoc' _ (Remote s) = s
 
+    addAttr :: Attributable a => a -> (Text, Text) -> a
     addAttr x (y, z) = x ! customAttribute (textTag y) (toValue z)
     mkScriptTag (Script loc attrs) render' =
         foldl' addAttr TBH.script (("src", renderLoc' render' loc) : attrs) $ return ()

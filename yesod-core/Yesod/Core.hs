@@ -8,6 +8,9 @@ module Yesod.Core
       -- ** Breadcrumbs
     , YesodBreadcrumbs (..)
     , breadcrumbs
+      -- ** Credentials
+    , YesodCredentials (..)
+    , isAuthorizedWithCredentials
       -- * Types
     , Approot (..)
       -- * Utitlities
